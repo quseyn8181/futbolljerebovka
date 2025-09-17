@@ -1,1 +1,268 @@
+<!doctype html>
 
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Simulator — Лига чемпионов 25/26</title>
+  <style>
+    :root{--bg:#0f172a;--card:#0b1220;--accent:#06b6d4;--muted:#94a3b8;--text:#e6eef6}
+    html,body{height:100%;margin:0;font-family:Inter, system-ui, Arial;background:linear-gradient(180deg,#031125 0%, #071a2a 100%);color:var(--text)}
+    .app{max-width:1100px;margin:28px auto;padding:20px;background:rgba(255,255,255,0.03);border-radius:12px;box-shadow:0 8px 30px rgba(2,6,23,0.6)}
+    h1{margin:0 0 12px;font-size:20px}
+    p.lead{margin:0 0 18px;color:var(--muted)}
+    .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+    button{background:var(--accent);border:none;padding:10px 14px;border-radius:8px;color:#022;cursor:pointer;font-weight:600}
+    button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--text)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .panel{background:var(--card);padding:12px;border-radius:10px}
+    .teams{display:flex;flex-wrap:wrap;gap:8px}
+    .team{padding:6px 10px;background:rgba(255,255,255,0.02);border-radius:8px;cursor:pointer;border:1px solid rgba(255,255,255,0.02)}
+    .team.selected{outline:2px solid rgba(6,182,212,0.25);background:linear-gradient(90deg,rgba(6,182,212,0.08),transparent)}
+    .bracket{display:flex;flex-direction:column;gap:8px}
+    .match{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:8px;background:rgba(255,255,255,0.01);border:1px solid rgba(255,255,255,0.02)}
+    .match .side{display:flex;gap:8px;align-items:center}
+    .score{min-width:40px;text-align:center}
+    input.score-input{width:48px;padding:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:var(--text);text-align:center}
+    footer{margin-top:18px;color:var(--muted);font-size:13px}
+    .winner{margin-top:14px;padding:10px;border-radius:8px;background:linear-gradient(90deg,rgba(6,182,212,0.06),rgba(56,189,248,0.03));color:var(--text);font-weight:700}
+    .small{font-size:13px;color:var(--muted)}
+    @media(min-width:900px){ .grid{grid-template-columns:1fr 1fr 1fr} }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>Симулятор Лиги чемпионов — HTML версия</h1>
+    <p class="lead">При запуске генерируется 32 команды. Вы можете выбирать победителей вручную или нажать &quot;Авто-симуляция&quot; для случайных счётов. Нажимайте &quot;Следующий раунд&quot;, когда готовы.</p><div class="controls">
+  <button id="regen">Генерировать 32 команды</button>
+  <button id="autoSim">Авто-симуляция текущего раунда</button>
+  <button id="autoAll">Авто-симуляция всех раундов</button>
+  <button id="nextRound" class="ghost">Следующий раунд</button>
+  <button id="reset" class="ghost">Сбросить всё</button>
+</div>
+
+<div id="status" class="small">Раунд: <span id="roundName">1/16</span> — Команд: <span id="teamCount">0</span></div>
+
+<div id="brackets" class="grid" style="margin-top:12px"></div>
+
+<div id="finalWinner" class="winner" style="display:none"></div>
+
+<footer>Инструкция: клик по команде в матче — выбирает победителя вручную. Можно править счёт в полях. Удачи — и да прибудет с тобой лучший клуб.</footer>
+
+  </div>  <script>
+    // Набор команд (примерный) — можно редактировать
+    const CLUBS = [
+      'Real Madrid', 'Manchester City', 'Bayern Munich', 'Paris Saint-Germain', 'Barcelona', 'Liverpool', 'Chelsea', 'Juventus',
+      'Atletico Madrid', 'Borussia Dortmund', 'AC Milan', 'Inter Milan', 'Manchester United', 'Arsenal', 'Napoli', 'Sevilla',
+      'RB Leipzig', 'Porto', 'Benfica', 'Sporting CP', 'Ajax', 'Celtic', 'PSV Eindhoven', 'Monaco', 'Lyon', 'Tottenham', 'RB Salzburg',
+      'Feyenoord', 'Villarreal', 'Atalanta', 'Fenerbahce', 'Galatasaray', 'Shakhtar Donetsk', 'Zenit', 'Braga', 'Marseille', 'Real Sociedad'
+    ];
+
+    // State
+    let state = {
+      teams: [], // array of team names for current round (length always power of two)
+      round: 0, // 0 -> 1/16 (32), 1->1/8(16), 2->1/4(8), 3->1/2(4), 4->Final(2)
+    };
+
+    const roundNames = ['1/16 (32)', '1/8 (16)', '1/4 (8)', '1/2 (4)', 'Финал (2)'];
+
+    // Helpers
+    function randPick(arr, n){
+      const copy = arr.slice();
+      const res = [];
+      while(res.length < n && copy.length){
+        const i = Math.floor(Math.random()*copy.length);
+        res.push(copy.splice(i,1)[0]);
+      }
+      return res;
+    }
+
+    function shuffle(a){
+      for(let i=a.length-1;i>0;i--){
+        const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];
+      }
+    }
+
+    // Init
+    const bracketsEl = document.getElementById('brackets');
+    const roundNameEl = document.getElementById('roundName');
+    const teamCountEl = document.getElementById('teamCount');
+    const finalWinnerEl = document.getElementById('finalWinner');
+
+    document.getElementById('regen').addEventListener('click',()=>{
+      startNewTournament();
+    });
+    document.getElementById('autoSim').addEventListener('click',()=>{ autoSimCurrentRound(); });
+    document.getElementById('autoAll').addEventListener('click',()=>{ autoSimAll(); });
+    document.getElementById('nextRound').addEventListener('click',()=>{ proceedToNextRound(); });
+    document.getElementById('reset').addEventListener('click',()=>{ resetAll(); });
+
+    function startNewTournament(){
+      finalWinnerEl.style.display = 'none';
+      state.round = 0;
+      // взять 32 уникальные команды из списка — если в списке меньше, повторим с разрешением
+      const needed = 32;
+      let pool = CLUBS.slice();
+      if(pool.length < needed){
+        // повторим элементы с индексами
+        while(pool.length < needed) pool = pool.concat(CLUBS.slice());
+      }
+      const picked = randPick(pool, needed);
+      shuffle(picked);
+      state.teams = picked;
+      renderRound();
+    }
+
+    function renderRound(){
+      bracketsEl.innerHTML = '';
+      const n = state.teams.length;
+      teamCountEl.textContent = n;
+      roundNameEl.textContent = roundNames[state.round] || (n+' команд');
+
+      // split into matches
+      const matches = [];
+      for(let i=0;i<n;i+=2) matches.push([state.teams[i], state.teams[i+1]]);
+
+      // Create columns for matches (for visual split), if many matches show two columns
+      matches.forEach((m, idx)=>{
+        const panel = document.createElement('div');panel.className='panel';
+        const bracket = document.createElement('div');bracket.className='bracket';
+
+        const match = document.createElement('div');match.className='match';
+        const left = document.createElement('div');left.className='side';
+        const right = document.createElement('div');right.className='side';
+
+        const leftBtn = document.createElement('div');leftBtn.className='team';leftBtn.textContent=m[0];
+        const rightBtn = document.createElement('div');rightBtn.className='team';rightBtn.textContent=m[1];
+
+        leftBtn.addEventListener('click',()=>selectWinnerForMatch(idx,0));
+        rightBtn.addEventListener('click',()=>selectWinnerForMatch(idx,1));
+
+        const scoreBox = document.createElement('div');scoreBox.className='score';
+        const scoreA = document.createElement('input');scoreA.type='number';scoreA.min=0;scoreA.value='0';scoreA.className='score-input';
+        const dash = document.createElement('span');dash.textContent=' - ';
+        const scoreB = document.createElement('input');scoreB.type='number';scoreB.min=0;scoreB.value='0';scoreB.className='score-input';
+
+        scoreA.addEventListener('change', ()=>{ markManualScore(idx); });
+        scoreB.addEventListener('change', ()=>{ markManualScore(idx); });
+
+        scoreBox.appendChild(scoreA);scoreBox.appendChild(dash);scoreBox.appendChild(scoreB);
+
+        left.appendChild(leftBtn);
+        right.appendChild(rightBtn);
+        match.appendChild(left);
+        match.appendChild(scoreBox);
+        match.appendChild(right);
+
+        // store meta on element
+        match.dataset.index = idx;
+        match._left = leftBtn; match._right = rightBtn; match._scoreA = scoreA; match._scoreB = scoreB;
+
+        bracket.appendChild(match);
+        panel.appendChild(bracket);
+        bracketsEl.appendChild(panel);
+      });
+
+      // clear previous selections
+      clearSelectedMarkers();
+    }
+
+    function clearSelectedMarkers(){
+      document.querySelectorAll('.team.selected').forEach(el=>el.classList.remove('selected'));
+    }
+
+    // keep an object to remember manual selections and scores for current round
+    let currentRoundData = {}; // key = matchIdx -> {winnerIndex:0|1, scoreA, scoreB}
+
+    function selectWinnerForMatch(matchIdx, which){
+      // mark selection visually
+      const matchEl = document.querySelectorAll('.match')[matchIdx];
+      if(!matchEl) return;
+      matchEl._left.classList.remove('selected'); matchEl._right.classList.remove('selected');
+      if(which===0) matchEl._left.classList.add('selected'); else matchEl._right.classList.add('selected');
+
+      // store
+      const a = parseInt(matchEl._scoreA.value)||0; const b = parseInt(matchEl._scoreB.value)||0;
+      currentRoundData[matchIdx] = {winnerIndex:which, scoreA:a, scoreB:b};
+    }
+
+    function markManualScore(matchIdx){
+      // if user changes scores, auto-select winner by greater score
+      const matchEl = document.querySelectorAll('.match')[matchIdx];
+      if(!matchEl) return;
+      const a = parseInt(matchEl._scoreA.value)||0; const b = parseInt(matchEl._scoreB.value)||0;
+      if(a===b) {
+        // tie — clear selection
+        matchEl._left.classList.remove('selected'); matchEl._right.classList.remove('selected');
+        delete currentRoundData[matchIdx];
+      } else if(a>b){ selectWinnerForMatch(matchIdx,0); } else { selectWinnerForMatch(matchIdx,1); }
+    }
+
+    function autoSimCurrentRound(){
+      const matches = document.querySelectorAll('.match');
+      matches.forEach((m, idx)=>{
+        // random score 0-4, favor small differences
+        const a = Math.floor(Math.random()*5);
+        let b = Math.floor(Math.random()*5);
+        // avoid ties for simplicity (or allow and resolve by random)
+        if(a===b) b = (b+1)%5;
+        m._scoreA.value = a; m._scoreB.value = b;
+        const winner = a>b?0:1;
+        selectWinnerForMatch(idx, winner);
+      });
+    }
+
+    function autoSimAll(){
+      // simulate current and all next rounds until winner
+      while(true){
+        autoSimCurrentRound();
+        const winners = collectWinnersFromCurrentRound();
+        if(winners.length===1){ showWinner(winners[0]); break; }
+        state.teams = winners; state.round++; renderRound();
+      }
+    }
+
+    function collectWinnersFromCurrentRound(){
+      const matches = document.querySelectorAll('.match');
+      const winners = [];
+      for(let i=0;i<matches.length;i++){
+        const m = matches[i];
+        const a = parseInt(m._scoreA.value)||0; const b = parseInt(m._scoreB.value)||0;
+        if(a===b){
+          // if tie and no manual selection, resolve randomly
+          const pick = Math.random()<0.5?0:1; winners.push(pick===0?m._left.textContent:m._right.textContent);
+        } else if(a>b){ winners.push(m._left.textContent); } else { winners.push(m._right.textContent); }
+      }
+      return winners;
+    }
+
+    function proceedToNextRound(){
+      // ensure winners equal half of current teams
+      const winners = collectWinnersFromCurrentRound();
+      if(winners.length !== state.teams.length/2){
+        alert('Сначала нужно определить победителей всех матчей этого раунда (вручную или нажать "Авто-симуляция").');
+        return;
+      }
+      state.teams = winners; state.round++;
+      if(state.teams.length===1){ showWinner(state.teams[0]); return; }
+      renderRound();
+    }
+
+    function showWinner(name){
+      finalWinnerEl.style.display = 'block';
+      finalWinnerEl.innerHTML = `ПОБЕДИТЕЛЬ: ${name} — Поздравляем! 🏆`;
+      // reset state so user can regen
+      state.teams = [name];
+    }
+
+    function resetAll(){
+      state = {teams:[], round:0};
+      currentRoundData = {};
+      bracketsEl.innerHTML=''; teamCountEl.textContent='0'; roundNameEl.textContent='—'; finalWinnerEl.style.display='none';
+    }
+
+    // start automatically on load
+    startNewTournament();
+
+  </script></body>
+</html>
